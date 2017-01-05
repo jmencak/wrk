@@ -12,6 +12,7 @@ static struct config {
     uint64_t pipeline;
     bool     delay;
     bool     dynamic;
+    bool     quiet;
     bool     latency;
     char    *host;
     char    *script;
@@ -46,6 +47,7 @@ static void usage() {
            "  Options:                                            \n"
            "    -c, --connections <N>  Connections to keep open   \n"
            "    -d, --duration    <T>  Duration of test           \n"
+           "    -q, --quiet            Quiet mode                 \n"
            "    -t, --threads     <N>  Number of threads to use   \n"
            "                                                      \n"
            "    -s, --script      <S>  Load Lua script file       \n"
@@ -135,8 +137,10 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sa, NULL);
 
     char *time = format_time_s(cfg.duration);
-    printf("Running %s test @ %s\n", time, url);
-    printf("  %"PRIu64" threads and %"PRIu64" connections\n", cfg.threads, cfg.connections);
+    if (!cfg.quiet) {
+        printf("Running %s test @ %s\n", time, url);
+        printf("  %"PRIu64" threads and %"PRIu64" connections\n", cfg.threads, cfg.connections);
+    }
 
     uint64_t start    = time_us();
     uint64_t complete = 0;
@@ -170,25 +174,30 @@ int main(int argc, char **argv) {
         stats_correct(statistics.latency, interval);
     }
 
-    print_stats_header();
-    print_stats("Latency", statistics.latency, format_time_us);
-    print_stats("Req/Sec", statistics.requests, format_metric);
+    if (!cfg.quiet) {
+        print_stats_header();
+        print_stats("Latency", statistics.latency, format_time_us);
+        print_stats("Req/Sec", statistics.requests, format_metric);
+    }
+
     if (cfg.latency) print_stats_latency(statistics.latency);
 
     char *runtime_msg = format_time_us(runtime_us);
 
-    printf("  %"PRIu64" requests in %s, %sB read\n", complete, runtime_msg, format_binary(bytes));
-    if (errors.connect || errors.read || errors.write || errors.timeout) {
-        printf("  Socket errors: connect %d, read %d, write %d, timeout %d\n",
-               errors.connect, errors.read, errors.write, errors.timeout);
-    }
+    if (!cfg.quiet) {
+        printf("  %"PRIu64" requests in %s, %sB read\n", complete, runtime_msg, format_binary(bytes));
+        if (errors.connect || errors.read || errors.write || errors.timeout) {
+            printf("  Socket errors: connect %d, read %d, write %d, timeout %d\n",
+                   errors.connect, errors.read, errors.write, errors.timeout);
+        }
 
-    if (errors.status) {
-        printf("  Non-2xx or 3xx responses: %d\n", errors.status);
-    }
+        if (errors.status) {
+            printf("  Non-2xx or 3xx responses: %d\n", errors.status);
+        }
 
-    printf("Requests/sec: %9.2Lf\n", req_per_s);
-    printf("Transfer/sec: %10sB\n", format_binary(bytes_per_s));
+        printf("Requests/sec: %9.2Lf\n", req_per_s);
+        printf("Transfer/sec: %10sB\n", format_binary(bytes_per_s));
+    }
 
     if (script_has_done(L)) {
         script_summary(L, runtime_us, complete, bytes);
@@ -238,10 +247,34 @@ static int connect_socket(thread *thread, connection *c) {
     struct aeEventLoop *loop = thread->loop;
     int fd, flags;
 
+    int rc;
+    struct addrinfo *addrf;
+    char *source_addr = thread->addrf;
+    struct addrinfo hints = {
+        .ai_family   = AF_UNSPEC,
+        .ai_socktype = SOCK_STREAM
+    };
+
     fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+
+    if (source_addr && *source_addr) {
+        if ((rc = getaddrinfo(source_addr, NULL, &hints, &addrf)) != 0) {
+            const char *msg = gai_strerror(rc);
+            fprintf(stderr, "unable to resolve source %s: %s\n", source_addr, msg);
+            exit(1);
+        }
+    }
 
     flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    if (source_addr && *source_addr) {
+        if ((rc = getaddrinfo(source_addr, NULL, &hints, &addrf)) != 0) {
+            const char *msg = gai_strerror(rc);
+            fprintf(stderr, "unable to resolve source %s: %s\n", source_addr, msg);
+            exit(1);
+        }
+    }
 
     if (connect(fd, addr->ai_addr, addr->ai_addrlen) == -1) {
         if (errno != EINPROGRESS) goto error;
@@ -472,6 +505,7 @@ static struct option longopts[] = {
     { "threads",     required_argument, NULL, 't' },
     { "script",      required_argument, NULL, 's' },
     { "header",      required_argument, NULL, 'H' },
+    { "quiet",       no_argument,       NULL, 'q' },
     { "latency",     no_argument,       NULL, 'L' },
     { "timeout",     required_argument, NULL, 'T' },
     { "help",        no_argument,       NULL, 'h' },
@@ -505,6 +539,9 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
                 break;
             case 'H':
                 *header++ = optarg;
+                break;
+            case 'q':
+                cfg->quiet = true;
                 break;
             case 'L':
                 cfg->latency = true;

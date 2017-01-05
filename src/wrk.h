@@ -28,6 +28,7 @@ typedef struct {
     pthread_t thread;
     aeEventLoop *loop;
     struct addrinfo *addr;
+    char addrf[16];	// 127.127.127.127
     uint64_t connections;
     uint64_t complete;
     uint64_t requests;
