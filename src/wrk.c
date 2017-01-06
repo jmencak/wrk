@@ -269,9 +269,9 @@ static int connect_socket(thread *thread, connection *c) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     if (source_addr && *source_addr) {
-        if ((rc = getaddrinfo(source_addr, NULL, &hints, &addrf)) != 0) {
+        if ((rc = bind(fd, addrf->ai_addr, addrf->ai_addrlen)) != 0) {
             const char *msg = gai_strerror(rc);
-            fprintf(stderr, "unable to resolve source %s: %s\n", source_addr, msg);
+            fprintf(stderr, "unable to bind source %s: %s\n", source_addr, msg);
             exit(1);
         }
     }
