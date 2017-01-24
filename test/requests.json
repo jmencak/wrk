@@ -1,22 +1,32 @@
 [
   {
-    "host_from": "127.0.0.101",
-    "method": "GET",
+    "method": "POST",
+    "body": "name=user&email=user@example.com",
+    "headers": {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Custom-Header-1": "test 1"
+    },
     "host": "127.0.0.1",
     "port": "8080",
-    "path": "/1.html"
+    "path": "/1024.html",
+    "delay": {
+      "min": "100",
+      "max": "200"
+    }
   },
   {
-    "method": "GET",
-    "host": "127.0.0.2",
+    "method": "POST",
+    "body": "name=user&email=user@example.com",
+    "headers": {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Custom-Header-2": "test 2"
+    },
+    "host": "127.0.0.1",
     "port": "8080",
-    "path": "/2.html"
-  },
-  {
-    "host_from": "127.0.0.103",
-    "method": "GET",
-    "host": "127.0.0.3",
-    "port": "8888",
-    "path": "/3.html"
+    "path": "/4096.html",
+    "delay": {
+      "min": "1000",
+      "max": "2000"
+    }
   }
 ]

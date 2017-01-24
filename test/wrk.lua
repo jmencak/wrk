@@ -10,11 +10,10 @@ local addrs_f = {}
 local threads = {}	-- only for done() statistics
 local counter = 0
 local max_requests = 0	-- maximum request (per thread)
-local request_data
 
 -- general functions --------------------------------------------------------------------------------
 function to_integer(number)
-    return math.floor(tonumber(number) or error("Could not cast '" .. tostring(number) .. "' to number.'"))
+  return math.floor(tonumber(number) or error("Could not cast '" .. tostring(number) .. "' to number.'"))
 end
 
 -- Load URL paths from a file
@@ -41,6 +40,13 @@ function load_request_objects_from_file(file)
 end
 
 -- wrk() functions ----------------------------------------------------------------------------------
+function delay() -- [ms]
+  local msg = "delay(): delay.min=%s, delay.max=%s\n"
+  io.write(msg:format(delay_min, delay_max))
+
+  return math.random(delay_min, delay_max)
+end
+
 function setup(thread)
   local addrs_append = function(host, port)
     for i, addr in ipairs(wrk.lookup(host, port)) do
@@ -84,9 +90,14 @@ function setup(thread)
   thread:set("path", req.path)
   thread:set("headers", req.headers)
   thread:set("body", req.body)
+  thread:set("delay_min", req.delay.min)	-- minimum per thread delay between requests [ms]
+  thread:set("delay_max", req.delay.max)	-- maximum per thread delay between requests [ms]
 
---  local msg = "setup(): host=%s; port=%d; index=%d; #addrs=%d\n"
---  io.write(msg:format(req.host, req.port, index, #addrs))
+--  local msg = "setup(): host=%s; port=%d; method=%s; index=%d; #addrs=%d\n"
+--  io.write(msg:format(req.host, req.port, req.method, index, #addrs))
+
+  local msg = "setup(): req.delay.max=%s\n"
+  io.write(msg:format(delay_max))
 
   thread.addr = addrs[index]
   wrk.src_ip(thread, addrs_f[index])
@@ -158,7 +169,6 @@ function response(status, headers, body)
   local time_us = wrk.time_us()
   local delay = time_us - start_us
 
---  io.write(msg:format(start_us,delay,id,responses,cont_len,wrk.thread.addr,port,path))
   io.write(msg:format(start_us,delay,status,cont_len,method,host,port,path,id,responses))
   io.flush()
 end
