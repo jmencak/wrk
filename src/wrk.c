@@ -24,14 +24,6 @@ static struct {
     stats *requests;
 } statistics;
 
-static struct sock sock = {
-    .connect  = sock_connect,
-    .close    = sock_close,
-    .read     = sock_read,
-    .write    = sock_write,
-    .readable = sock_readable
-};
-
 static struct http_parser_settings parser_settings = {
     .on_message_complete = response_complete
 };
@@ -63,6 +55,7 @@ static void usage() {
 int main(int argc, char **argv) {
     char *url, **headers = zmalloc(argc * sizeof(char *));
     struct http_parser_url parts = {};
+    bool ssl = false;
 
     if (parse_args(&cfg, &url, &parts, headers, argc, argv)) {
         usage();
@@ -74,17 +67,13 @@ int main(int argc, char **argv) {
     char *port    = copy_url_part(url, &parts, UF_PORT);
     char *service = port ? port : schema;
 
+    if ((cfg.ctx = ssl_init()) == NULL) {
+        fprintf(stderr, "unable to initialize SSL\n");
+        ERR_print_errors_fp(stderr);
+        exit(1);
+    }
     if (!strncmp("https", schema, 5)) {
-        if ((cfg.ctx = ssl_init()) == NULL) {
-            fprintf(stderr, "unable to initialize SSL\n");
-            ERR_print_errors_fp(stderr);
-            exit(1);
-        }
-        sock.connect  = ssl_connect;
-        sock.close    = ssl_close;
-        sock.read     = ssl_read;
-        sock.write    = ssl_write;
-        sock.readable = ssl_readable;
+        ssl = true;
     }
 
     signal(SIGPIPE, SIG_IGN);
@@ -105,6 +94,7 @@ int main(int argc, char **argv) {
 
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t      = &threads[i];
+        t->ssl         = ssl;
         t->loop        = aeCreateEventLoop(10 + cfg.connections * 3);
         t->connections = cfg.connections / cfg.threads;
 
@@ -222,8 +212,8 @@ void *thread_main(void *arg) {
     connection *c = thread->cs;
 
     for (uint64_t i = 0; i < thread->connections; i++, c++) {
-        c->thread = thread;
-        c->ssl     = cfg.ctx ? SSL_new(cfg.ctx) : NULL;
+        c->thread  = thread;
+        c->ssl     = (cfg.ctx && c->thread->ssl) ? SSL_new(cfg.ctx) : NULL;
         c->request = request;
         c->length  = length;
         c->delayed = cfg.delay;
@@ -298,7 +288,7 @@ static int connect_socket(thread *thread, connection *c) {
 
 static int reconnect_socket(thread *thread, connection *c) {
     aeDeleteFileEvent(thread->loop, c->fd, AE_WRITABLE | AE_READABLE);
-    sock.close(c);
+    SOCK_CLOSE(c);
     close(c->fd);
     return connect_socket(thread, c);
 }
@@ -395,7 +385,7 @@ static int response_complete(http_parser *parser) {
 static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
 
-    switch (sock.connect(c, cfg.host)) {
+    switch (SOCK_CONNECT(c, cfg.host)) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
@@ -437,7 +427,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     size_t len = c->length  - c->written;
     size_t n;
 
-    switch (sock.write(c, buf, len, &n)) {
+    switch (SOCK_WRITE(c, buf, len, &n)) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
@@ -461,7 +451,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
     size_t n;
 
     do {
-        switch (sock.read(c, &n)) {
+        switch (SOCK_READ(c, &n)) {
             case OK:    break;
             case ERROR: goto error;
             case RETRY: return;
@@ -471,7 +461,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
         if (n == 0 && !http_body_is_final(&c->parser)) goto error;
 
         c->thread->bytes += n;
-    } while (n == RECVBUF && sock.readable(c) > 0);
+    } while (n == RECVBUF && SOCK_READABLE(c) > 0);
 
     return;
 
@@ -523,7 +513,7 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
     cfg->duration    = 10;
     cfg->timeout     = SOCKET_TIMEOUT_MS;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:Lrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:qLrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
                 if (scan_metric(optarg, &cfg->threads)) return -1;

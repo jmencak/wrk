@@ -41,8 +41,8 @@ end
 
 -- wrk() functions ----------------------------------------------------------------------------------
 function delay() -- [ms]
-  local msg = "delay(): delay.min=%s, delay.max=%s\n"
-  io.write(msg:format(delay_min, delay_max))
+--  local msg = "delay(): delay.min=%s, delay.max=%s\n"
+--  io.write(msg:format(delay_min, delay_max))
 
   return math.random(delay_min, delay_max)
 end
@@ -84,23 +84,22 @@ function setup(thread)
   end
 
   thread:set("id", counter)
-  thread:set("method", req.method)
   thread:set("host", req.host)
   thread:set("port", req.port)
+  thread:set("method", req.method)
   thread:set("path", req.path)
   thread:set("headers", req.headers)
   thread:set("body", req.body)
   thread:set("delay_min", req.delay.min)	-- minimum per thread delay between requests [ms]
   thread:set("delay_max", req.delay.max)	-- maximum per thread delay between requests [ms]
 
---  local msg = "setup(): host=%s; port=%d; method=%s; index=%d; #addrs=%d\n"
---  io.write(msg:format(req.host, req.port, req.method, index, #addrs))
-
-  local msg = "setup(): req.delay.max=%s\n"
-  io.write(msg:format(delay_max))
-
   thread.addr = addrs[index]
-  wrk.src_ip(thread, addrs_f[index])
+  thread.scheme = req.scheme
+  thread.src_ip = addrs_f[index]
+
+--  local msg = "setup(): wrk.scheme=%s, host=%s, port=%d, method=%s, index=%d, thread.addr=%s, thread.scheme=%s, thread.src_ip=%s, #addrs=%d\n"
+--  io.write(msg:format(wrk.scheme, req.host, req.port, req.method, index, thread.addr, thread.scheme, thread.src_ip, #addrs))
+
   table.insert(threads, thread)
 end
 
@@ -115,8 +114,8 @@ function wrk.init(args)
     max_requests = to_integer(args[1])
   end
 
---  local msg = "wrk.init(): thread %d, wrk.host=%s\n"
---  io.write(msg:format(id, wrk.host))
+--  local msg = "wrk.init(): thread %d, wrk.scheme=%s, wrk.host=%s, wrk.port=%s\n"
+--  io.write(msg:format(id, wrk.scheme, wrk.host, wrk.port))
 
   wrk.headers["Host"] = host
 
@@ -154,21 +153,20 @@ end
 function response(status, headers, body)
   responses = responses + 1
 
-  -- Stop after max_requests if max_requests is a positive number
-  if (max_requests > 0) and (responses >= max_requests) then
-    wrk.thread:stop()
-    return
-  end
-
   local cont_len = headers["Content-Length"]
   if (cont_len == nil) then
     cont_len = 0
   end
 
-  local msg = "%d,%d,%d,%d,%s %s:%s%s,%d,%d\n"
+  local msg = "%d,%d,%d,%d,%s %s://%s:%s%s,%d,%d\n"
   local time_us = wrk.time_us()
   local delay = time_us - start_us
 
-  io.write(msg:format(start_us,delay,status,cont_len,method,host,port,path,id,responses))
+  io.write(msg:format(start_us,delay,status,cont_len,method,wrk.thread.scheme,host,port,path,id,responses))
   io.flush()
+
+  -- Stop after max_requests if max_requests is a positive number
+  if (max_requests > 0) and (responses >= max_requests) then
+    wrk.thread:stop()
+  end
 end

@@ -22,7 +22,6 @@ static int script_thread_newindex(lua_State *);
 static int script_wrk_lookup(lua_State *);
 static int script_wrk_connect(lua_State *);
 static int script_wrk_time_us(lua_State *);
-static int script_wrk_src_ip(lua_State *);
 
 static void set_fields(lua_State *, int, const table_field *);
 static void set_field(lua_State *, int, char *, int);
@@ -42,8 +41,8 @@ static const struct luaL_reg statslib[] = {
 };
 
 static const struct luaL_reg threadlib[] = {
-    { "__index",    script_thread_index    },
-    { "__newindex", script_thread_newindex },
+    { "__index",    script_thread_index    }, // var reads
+    { "__newindex", script_thread_newindex }, // var writes
     { NULL,         NULL                   }
 };
 
@@ -71,7 +70,6 @@ lua_State *script_create(char *file, char *url, char **headers) {
         { "lookup",  LUA_TFUNCTION, script_wrk_lookup  },
         { "connect", LUA_TFUNCTION, script_wrk_connect },
         { "time_us", LUA_TFUNCTION, script_wrk_time_us },
-        { "src_ip",  LUA_TFUNCTION, script_wrk_src_ip  },
         { "path",    LUA_TSTRING,   path               },
         { NULL,      0,             NULL               },
     };
@@ -310,6 +308,20 @@ static struct addrinfo *checkaddr(lua_State *L) {
     return addr;
 }
 
+static const char *checkscheme(lua_State *L) {
+    const char *scheme = luaL_checkstring(L, -1);
+    bool scheme_valid = strcmp("http", scheme) == 0 || strcmp("https", scheme) == 0;
+    luaL_argcheck(L, scheme != NULL, 1, "`scheme' expected");
+    luaL_argcheck(L, scheme_valid, 1, "`scheme' not any of: (http|https)");
+    return scheme;
+}
+
+static void set_src_ip(lua_State *L, thread *t) {
+    const char *host = lua_tostring(L, -1);
+
+    if(host) strncpy(t->addrf, host, 16);
+}
+
 void script_addr_copy(struct addrinfo *src, struct addrinfo *dst) {
     *dst = *src;
     dst->ai_addr = zmalloc(src->ai_addrlen);
@@ -322,6 +334,17 @@ struct addrinfo *script_addr_clone(lua_State *L, struct addrinfo *addr) {
     lua_setmetatable(L, -2);
     script_addr_copy(addr, udata);
     return udata;
+}
+
+const char *script_scheme_get(lua_State *L, const bool ssl) {
+    const char *scheme = ssl? "https": "http";
+    lua_pushfstring(L, scheme);
+    return scheme;
+}
+
+const char *script_src_ip_get(lua_State *L, const char *src_ip) {
+    lua_pushfstring(L, src_ip);
+    return src_ip;
 }
 
 static int script_addr_tostring(lua_State *L) {
@@ -422,6 +445,8 @@ static int script_thread_index(lua_State *L) {
     if (!strcmp("get",  key)) lua_pushcfunction(L, script_thread_get);
     if (!strcmp("set",  key)) lua_pushcfunction(L, script_thread_set);
     if (!strcmp("stop", key)) lua_pushcfunction(L, script_thread_stop);
+    if (!strcmp("scheme", key)) script_scheme_get(L, t->ssl);
+    if (!strcmp("src_ip", key)) script_src_ip_get(L, t->addrf);
     if (!strcmp("addr", key)) script_addr_clone(L, t->addr);
     return 1;
 }
@@ -434,6 +459,11 @@ static int script_thread_newindex(lua_State *L) {
         if (t->addr) zfree(t->addr->ai_addr);
         t->addr = zrealloc(t->addr, sizeof(*addr));
         script_addr_copy(addr, t->addr);
+    } else if (!strcmp("scheme", key)) {
+        const char *scheme = checkscheme(L);
+        t->ssl = !strncmp("https", scheme, 5);
+    } else if (!strcmp("src_ip", key)) {
+        set_src_ip(L, t);
     } else {
         luaL_error(L, "cannot set '%s' on thread", luaL_typename(L, -1));
     }
@@ -483,14 +513,6 @@ static int script_wrk_time_us(lua_State *L) {
     gettimeofday(&tv, NULL);
     uint64_t now = (tv.tv_sec * 1000000) + tv.tv_usec;
     lua_pushnumber(L, now);
-    return 1;
-}
-
-static int script_wrk_src_ip(lua_State *L) {
-    thread *t = checkthread(L);
-    const char *host = lua_tostring(L, -1);
-
-    if(host) strncpy(t->addrf, host, 16);
     return 1;
 }
 

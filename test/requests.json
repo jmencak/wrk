@@ -1,29 +1,33 @@
 [
   {
-    "method": "POST",
-    "body": "name=user&email=user@example.com",
+    "host_from": "192.168.0.101",
+    "scheme": "http",
+    "host": "127.0.1.1",
+    "port": "8080",
+    "method": "GET",
+    "path": "/1024.html",
     "headers": {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Custom-Header-1": "test 1"
     },
-    "host": "127.0.0.1",
-    "port": "8080",
-    "path": "/1024.html",
+    "body": "name=user&email=user@example.com",
     "delay": {
       "min": "100",
       "max": "200"
     }
   },
   {
+    "host_from": "192.168.0.102",
+    "scheme": "https",
+    "host": "127.0.1.2",
+    "port": "8443",
     "method": "POST",
-    "body": "name=user&email=user@example.com",
+    "path": "/2048.html",
     "headers": {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Custom-Header-2": "test 2"
     },
-    "host": "127.0.0.1",
-    "port": "8080",
-    "path": "/4096.html",
+    "body": "name=user&email=user@example.com",
     "delay": {
       "min": "1000",
       "max": "2000"

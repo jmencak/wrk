@@ -22,12 +22,19 @@
 #define SOCKET_TIMEOUT_MS   2000
 #define RECORD_INTERVAL_MS  100
 
+#define SOCK_CONNECT(c, host) (c->thread->ssl? ssl_connect(c, host): sock_connect(c, host))
+#define SOCK_CLOSE(c) (c->thread->ssl? ssl_close(c): sock_close(c))
+#define SOCK_READ(c, n) (c->thread->ssl? ssl_read(c, n): sock_read(c, n))
+#define SOCK_WRITE(c, buf, len, n) (c->thread->ssl? ssl_write(c, buf, len, n): sock_write(c, buf, len, n))
+#define SOCK_READABLE(c) (c->thread->ssl? ssl_readable(c): sock_readable(c))
+
 extern const char *VERSION;
 
 typedef struct {
     pthread_t thread;
     aeEventLoop *loop;
     struct addrinfo *addr;
+    bool ssl;
     char addrf[16];	// 127.127.127.127
     uint64_t connections;
     uint64_t complete;
