@@ -14,6 +14,8 @@ static struct config {
     bool     dynamic;
     bool     quiet;
     bool     latency;
+    bool     tls_session_reuse;
+    bool     no_keep_alive;
     char    *host;
     char    *script;
     SSL_CTX *ctx;
@@ -41,6 +43,8 @@ static void usage() {
            "    -d, --duration    <T>  Duration of test           \n"
            "    -q, --quiet            Quiet mode                 \n"
            "    -t, --threads     <N>  Number of threads to use   \n"
+           "    -r, --reuse       <R>  Enable tls session reuse   \n"
+           "    -k, --no_keepalive <K> Disable http keep-alive    \n"
            "                                                      \n"
            "    -s, --script      <S>  Load Lua script file       \n"
            "    -H, --header      <H>  Add header to request      \n"
@@ -99,6 +103,7 @@ int main(int argc, char **argv) {
         t->connections = cfg.connections / cfg.threads;
 
         t->L = script_create(cfg.script, url, headers);
+
         script_init(L, t, argc - optind, &argv[optind]);
 
         if (i == 0) {
@@ -129,7 +134,8 @@ int main(int argc, char **argv) {
     char *time = format_time_s(cfg.duration);
     if (!cfg.quiet) {
         printf("Running %s test @ %s\n", time, url);
-        printf("  %"PRIu64" threads and %"PRIu64" connections\n", cfg.threads, cfg.connections);
+        printf("  %"PRIu64" threads and %"PRIu64" connections. session reuse:%s, keep-alive:%s\n", cfg.threads, cfg.connections,
+                cfg.tls_session_reuse?"enabled":"disabled", cfg.no_keep_alive?"disabled":"enabled");
     }
 
     uint64_t start    = time_us();
@@ -137,9 +143,10 @@ int main(int argc, char **argv) {
     uint64_t bytes    = 0;
     errors errors     = { 0 };
 
-    sleep(cfg.duration);
+    sleep(cfg.duration);	// wait for the threads to do their job
     stop = 1;
 
+    // collect the threads
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t = &threads[i];
         pthread_join(t->thread, NULL);
@@ -189,12 +196,27 @@ int main(int argc, char **argv) {
         printf("Transfer/sec: %10sB\n", format_binary(bytes_per_s));
     }
 
+    if(!cfg.quiet && cfg.ctx) {
+        printf("TLS new conn %d reused %d miss %d finished conn %d sess_cb_hit %d renegotiation %d timeout %d full remove %d \n",
+                cfg.ctx->stats.sess_connect,
+                cfg.ctx->stats.sess_hit,
+                cfg.ctx->stats.sess_miss,
+                cfg.ctx->stats.sess_connect_good,
+                cfg.ctx->stats.sess_cb_hit,
+                cfg.ctx->stats.sess_connect_renegotiate,
+                cfg.ctx->stats.sess_timeout,
+                cfg.ctx->stats.sess_cache_full
+              );
+    }
+
     if (script_has_done(L)) {
         script_summary(L, runtime_us, complete, bytes);
         script_errors(L, &errors);
         script_done(L, statistics.latency, statistics.requests);
     }
 
+    stats_free(statistics.latency);
+    stats_free(statistics.requests);
     return 0;
 }
 
@@ -213,7 +235,6 @@ void *thread_main(void *arg) {
 
     for (uint64_t i = 0; i < thread->connections; i++, c++) {
         c->thread  = thread;
-        c->ssl     = (cfg.ctx && c->thread->ssl) ? SSL_new(cfg.ctx) : NULL;
         c->request = request;
         c->length  = length;
         c->delayed = cfg.delay;
@@ -226,8 +247,10 @@ void *thread_main(void *arg) {
     thread->start = time_us();
     aeMain(loop);
 
+    SSL_SESSION_free(thread->cache.cached_session);
     aeDeleteEventLoop(loop);
-    zfree(thread->cs);
+    zfree(thread->cs);   thread->cs = NULL;
+    zfree(thread->host); thread->host = NULL;
 
     return NULL;
 }
@@ -272,6 +295,14 @@ static int connect_socket(thread *thread, connection *c) {
 
     flags = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flags, sizeof(flags));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &flags, sizeof(flags));
+
+
+    if(cfg.ctx){
+        c->ssl = cfg.ctx ? SSL_new(cfg.ctx) : NULL;
+        SSL_set_ex_data(c->ssl,ssl_data_index,c);
+        c->cache = cfg.tls_session_reuse? &thread->cache:NULL;
+    }
 
     flags = AE_READABLE | AE_WRITABLE;
     if (aeCreateFileEvent(loop, fd, flags, socket_connected, c) == AE_OK) {
@@ -371,7 +402,7 @@ static int response_complete(http_parser *parser) {
         aeCreateFileEvent(thread->loop, c->fd, AE_WRITABLE, socket_writeable, c);
     }
 
-    if (!http_should_keep_alive(parser)) {
+    if ((cfg.no_keep_alive) || (!http_should_keep_alive(parser))) {
         reconnect_socket(thread, c);
         goto done;
     }
@@ -384,11 +415,17 @@ static int response_complete(http_parser *parser) {
 
 static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
+    char    *host = c->thread->host? c->thread->host: cfg.host;
 
-    switch (SOCK_CONNECT(c, cfg.host)) {
-        case OK:    break;
-        case ERROR: goto error;
-        case RETRY: return;
+    switch (SOCK_CONNECT(c, host)) {
+        case OK:
+        break;
+
+        case ERROR:
+        goto error;
+
+        case RETRY:
+        return;
     }
 
     http_parser_init(&c->parser, HTTP_RESPONSE);
@@ -453,7 +490,10 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
     do {
         switch (SOCK_READ(c, &n)) {
             case OK:    break;
-            case ERROR: goto error;
+            case ERROR: 
+              fprintf(stderr, "sock read error\n");
+
+              goto error;
             case RETRY: return;
         }
 
@@ -498,6 +538,8 @@ static struct option longopts[] = {
     { "quiet",       no_argument,       NULL, 'q' },
     { "latency",     no_argument,       NULL, 'L' },
     { "timeout",     required_argument, NULL, 'T' },
+    { "reuse",       no_argument,       NULL, 'r' },
+    { "no_keepalive",no_argument,       NULL, 'k' },
     { "help",        no_argument,       NULL, 'h' },
     { "version",     no_argument,       NULL, 'v' },
     { NULL,          0,                 NULL,  0  }
@@ -513,7 +555,7 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
     cfg->duration    = 10;
     cfg->timeout     = SOCKET_TIMEOUT_MS;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:qLrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:qkLrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
                 if (scan_metric(optarg, &cfg->threads)) return -1;
@@ -543,6 +585,12 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
             case 'v':
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
+                break;
+            case 'r':
+                cfg->tls_session_reuse=true;
+                break;
+            case 'k':
+                cfg->no_keep_alive=true;
                 break;
             case 'h':
             case '?':

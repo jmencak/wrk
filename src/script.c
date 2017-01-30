@@ -100,7 +100,7 @@ lua_State *script_create(char *file, char *url, char **headers) {
     return L;
 }
 
-bool script_resolve(lua_State *L, char *host, char *service) {
+bool script_resolve(lua_State *L, const char *host, const char *service) {
     lua_getglobal(L, "wrk");
 
     lua_getfield(L, -1, "resolve");
@@ -316,6 +316,13 @@ static const char *checkscheme(lua_State *L) {
     return scheme;
 }
 
+static void set_host(lua_State *L, thread *t) {
+    const char *host = lua_tostring(L, -1);
+
+    if (t->host) zfree(t->host);
+    t->host = zstrdup(host);
+}
+
 static void set_src_ip(lua_State *L, thread *t) {
     const char *host = lua_tostring(L, -1);
 
@@ -342,6 +349,11 @@ const char *script_scheme_get(lua_State *L, const bool ssl) {
     return scheme;
 }
 
+const char *script_host_get(lua_State *L, const char *host) {
+    lua_pushfstring(L, host);
+    return host;
+}
+
 const char *script_src_ip_get(lua_State *L, const char *src_ip) {
     lua_pushfstring(L, src_ip);
     return src_ip;
@@ -365,7 +377,7 @@ static int script_addr_tostring(lua_State *L) {
 
 static int script_addr_gc(lua_State *L) {
     struct addrinfo *addr = checkaddr(L);
-    zfree(addr->ai_addr);
+    zfree(addr->ai_addr); addr->ai_addr = NULL;
     return 0;
 }
 
@@ -446,6 +458,7 @@ static int script_thread_index(lua_State *L) {
     if (!strcmp("set",  key)) lua_pushcfunction(L, script_thread_set);
     if (!strcmp("stop", key)) lua_pushcfunction(L, script_thread_stop);
     if (!strcmp("scheme", key)) script_scheme_get(L, t->ssl);
+    if (!strcmp("host", key)) script_host_get(L, t->host);
     if (!strcmp("src_ip", key)) script_src_ip_get(L, t->addrf);
     if (!strcmp("addr", key)) script_addr_clone(L, t->addr);
     return 1;
@@ -462,6 +475,8 @@ static int script_thread_newindex(lua_State *L) {
     } else if (!strcmp("scheme", key)) {
         const char *scheme = checkscheme(L);
         t->ssl = !strncmp("https", scheme, 5);
+    } else if (!strcmp("host", key)) {
+        set_host(L, t);
     } else if (!strcmp("src_ip", key)) {
         set_src_ip(L, t);
     } else {
@@ -488,12 +503,14 @@ static int script_wrk_lookup(lua_State *L) {
     }
 
     lua_newtable(L);
+
     for (struct addrinfo *addr = addrs; addr != NULL; addr = addr->ai_next) {
         script_addr_clone(L, addr);
         lua_rawseti(L, -2, index++);
     }
 
     freeaddrinfo(addrs);
+
     return 1;
 }
 

@@ -5,11 +5,10 @@ local cjson_safe = require "cjson.safe"
 
 -- global variables ---------------------------------------------------------------------------------
 local requests_json = "requests.json"
-local addrs   = {}
-local addrs_f = {}
-local threads = {}	-- only for done() statistics
+local addrs_live = 0
 local counter = 0
-local max_requests = 0	-- maximum request (per thread)
+local max_requests = 20	-- maximum request (per thread)
+local threads = {}	-- only for done() statistics
 
 -- general functions --------------------------------------------------------------------------------
 function to_integer(number)
@@ -51,12 +50,17 @@ function setup(thread)
   local addrs_append = function(host, port)
     for i, addr in ipairs(wrk.lookup(host, port)) do
       if wrk.connect(addr) then
-        addrs[#addrs+1] = addr
+        addrs_live = addrs_live + 1
+        return addr
+      else
+        local msg = "setup(): couldn't connect to %s:%s\n"
+        io.write(msg:format(host, port))
+        return nil
       end
     end
   end
 
-  if #addrs == 0 then
+  if addrs_live == 0 then
     requests_data = load_request_objects_from_file(requests_json)
 
     -- Check if at least one request was found in the requests_json file
@@ -68,21 +72,32 @@ function setup(thread)
 
 --    local msg = "setup(): host=%s; port=%d; req_data=%d\n"
     for i, req in ipairs(requests_data) do
+       -- Use the global host/port defined on the command line if not defined
+       if req.host == nil then req.host = wrk.host end
+       if req.port == nil then req.port = wrk.port end
+
 --      io.write(msg:format(req.host, req.port, #requests_data))
-       addrs_append(req.host, req.port)
-       addrs_f[#addrs] = req.host_from
+       req.addr = addrs_append(req.host, req.port)
     end
   end
 
-  local index = (counter % #addrs) + 1 	-- we can have more connections than threads
-  counter = counter + 1
-  req = requests_data[index]
-
-  if req == nil then
+  if addrs_live == 0 then
     io.write("setup(): no live hosts to test against\n")
     os.exit()
   end
 
+  local index
+  while true do
+    index = (counter % #requests_data) + 1 		-- we can have more connections than threads
+    req = requests_data[index]
+--    local msg = "setup(): index=%d, counter=%d, addrs_live=%d\n"
+--    io.write(msg:format(index, counter, addrs_live))
+    if req.addr ~= nil then break end
+    counter = counter + 1			-- skip unreachable hosts
+  end
+  counter = counter + 1
+
+  -- set per-thread userdata
   thread:set("id", counter)
   thread:set("host", req.host)
   thread:set("port", req.port)
@@ -93,12 +108,14 @@ function setup(thread)
   thread:set("delay_min", req.delay.min)	-- minimum per thread delay between requests [ms]
   thread:set("delay_max", req.delay.max)	-- maximum per thread delay between requests [ms]
 
-  thread.addr = addrs[index]
-  thread.scheme = req.scheme
-  thread.src_ip = addrs_f[index]
+  -- bindings to wrk C code
+  thread.addr = req.addr
+  thread.host = req.host			-- addition to standard wrk (TLS)
+  thread.scheme = req.scheme			-- addition to standard wrk
+  thread.src_ip = req.host_from			-- addition to standard wrk
 
---  local msg = "setup(): wrk.scheme=%s, host=%s, port=%d, method=%s, index=%d, thread.addr=%s, thread.scheme=%s, thread.src_ip=%s, #addrs=%d\n"
---  io.write(msg:format(wrk.scheme, req.host, req.port, req.method, index, thread.addr, thread.scheme, thread.src_ip, #addrs))
+--  local msg = "setup(): wrk.scheme=%s, host=%s, port=%d, method=%s, index=%d, thread.addr=%s, thread.host=%s, thread.scheme=%s, thread.src_ip=%s, addrs_live=%d\n"
+--  io.write(msg:format(wrk.scheme, req.host, req.port, req.method, index, thread.addr, thread.host, thread.scheme, thread.src_ip, addrs_live))
 
   table.insert(threads, thread)
 end
@@ -146,6 +163,9 @@ end
 function request()
   requests = requests + 1
   start_us = wrk.time_us()
+
+--  local msg = "request(): method=%s, host=%s, port=%d\n"
+--  io.write(msg:format(method, host, port))
 
   return wrk.format(method, path, headers, body)
 end

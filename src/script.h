@@ -11,7 +11,7 @@
 
 lua_State *script_create(char *, char *, char **);
 
-bool script_resolve(lua_State *, char *, char *);
+bool script_resolve(lua_State *, const char *, const char *);
 void script_setup(lua_State *, thread *);
 void script_done(lua_State *, stats *, stats *);
 
