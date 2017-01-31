@@ -7,7 +7,7 @@ local cjson_safe = require "cjson.safe"
 local requests_json = "requests.json"
 local addrs_live = 0
 local counter = 0
-local max_requests = 20	-- maximum request (per thread)
+local max_requests = 0	-- maximum request (per thread)
 local threads = {}	-- only for done() statistics
 
 -- general functions --------------------------------------------------------------------------------
