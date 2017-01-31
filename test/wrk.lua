@@ -40,10 +40,12 @@ end
 
 -- wrk() functions ----------------------------------------------------------------------------------
 function delay() -- [ms]
---  local msg = "delay(): delay.min=%s, delay.max=%s\n"
---  io.write(msg:format(delay_min, delay_max))
+  local delay_rand = math.random(delay_min, delay_max)
 
-  return math.random(delay_min, delay_max)
+--  local msg = "delay(): delay.min=%s, delay.max=%s, delay_rand=%d\n"
+--  io.write(msg:format(delay_min, delay_max, delay_rand))
+
+  return delay_rand
 end
 
 function setup(thread)
@@ -133,6 +135,8 @@ function wrk.init(args)
 
 --  local msg = "wrk.init(): thread %d, wrk.scheme=%s, wrk.host=%s, wrk.port=%s\n"
 --  io.write(msg:format(id, wrk.scheme, wrk.host, wrk.port))
+
+  math.randomseed(id)				-- generate different random seed for every thread
 
   wrk.headers["Host"] = host
 
