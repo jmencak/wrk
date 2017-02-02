@@ -421,6 +421,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
         case OK:
         break;
 
+        case READ_EOF: /* shouldn't happen, fall through */
         case ERROR:
         goto error;
 
@@ -466,6 +467,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 
     switch (SOCK_WRITE(c, buf, len, &n)) {
         case OK:    break;
+        case READ_EOF: /* shouldn't happen, fall through */
         case ERROR: goto error;
         case RETRY: return;
     }
@@ -486,15 +488,22 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
     size_t n;
+    int read_status = OK;
 
     do {
-        switch (SOCK_READ(c, &n)) {
-            case OK:    break;
+        switch (read_status = SOCK_READ(c, &n)) {
+            case OK:
+              break;
+
             case ERROR: 
               fprintf(stderr, "sock read error\n");
-
               goto error;
-            case RETRY: return;
+
+            case RETRY:
+              return;
+
+            case READ_EOF:
+              break;
         }
 
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n) goto error;
@@ -503,6 +512,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
         c->thread->bytes += n;
     } while (n == RECVBUF && SOCK_READABLE(c) > 0);
 
+    if (read_status == READ_EOF) goto error;
     return;
 
   error:
