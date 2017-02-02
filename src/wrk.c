@@ -421,7 +421,6 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
         case OK:
         break;
 
-        case READ_EOF: /* shouldn't happen, fall through */
         case ERROR:
         goto error;
 
@@ -467,7 +466,6 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 
     switch (SOCK_WRITE(c, buf, len, &n)) {
         case OK:    break;
-        case READ_EOF: /* shouldn't happen, fall through */
         case ERROR: goto error;
         case RETRY: return;
     }
@@ -488,11 +486,10 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
     size_t n, read;
-    int read_status = OK;
     read = 0;
 
     do {
-        switch (read_status = SOCK_READ(c, &n)) {
+        switch (SOCK_READ(c, &n)) {
             case OK:
               break;
 
@@ -501,9 +498,6 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
 
             case RETRY:
               return;
-
-            case READ_EOF:
-              break;
         }
 
         read += n;
@@ -523,7 +517,6 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
         c->thread->bytes += n;
     } while (n == RECVBUF && SOCK_READABLE(c) > 0);
 
-    if (read_status == READ_EOF) goto error;
     return;
 
   error:

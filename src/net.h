@@ -9,8 +9,7 @@
 typedef enum {
     OK,
     ERROR,
-    RETRY,
-    READ_EOF
+    RETRY
 } status;
 
 struct sock {

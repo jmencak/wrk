@@ -21,7 +21,7 @@ status sock_close(connection *c) {
 status sock_read(connection *c, size_t *n) {
     ssize_t r;
     if ((r = read(c->fd, c->buf, sizeof(c->buf))) == -1) {
-        if (r == 0) return READ_EOF;
+        if (r == 0) return ERROR;	/* treat 0 bytes reads as error; also see return values from SSL_read() */
         switch (errno) {
             case EAGAIN: return RETRY;
             default:     return ERROR;
