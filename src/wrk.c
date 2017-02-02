@@ -485,8 +485,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 
 static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
-    size_t n, read;
-    read = 0;
+    size_t n;
 
     do {
         switch (SOCK_READ(c, &n)) {
@@ -500,10 +499,8 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
               return;
         }
 
-        read += n;
-        if (read == 0) {
+        if (n == 0) // EOF
             goto reconnect;
-        }
 
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n)
             goto error;
