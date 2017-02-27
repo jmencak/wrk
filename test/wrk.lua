@@ -1,7 +1,5 @@
 -- load modules -------------------------------------------------------------------------------------
-local cjson = require "cjson"
-local cjson2 = cjson.new()
-local cjson_safe = require "cjson.safe"
+require("json")
 
 -- global variables ---------------------------------------------------------------------------------
 local requests_json = "requests.json"
@@ -33,7 +31,7 @@ function load_request_objects_from_file(file)
   end
 
   -- Translate Lua value to/from JSON
-  data = cjson.decode(content)
+  data = json.decode.decode(content, strict)
 
   return data
 end
