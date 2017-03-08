@@ -268,6 +268,7 @@ static int connect_socket(thread *thread, connection *c) {
         .ai_socktype = SOCK_STREAM
     };
 
+    c->cstats.reqs = 0;
     fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 
     if (source_addr && *source_addr) {
@@ -303,6 +304,8 @@ static int connect_socket(thread *thread, connection *c) {
         SSL_set_ex_data(c->ssl,ssl_data_index,c);
         c->cache = cfg.tls_session_reuse? &thread->cache:NULL;
     }
+
+    c->cstats.start   = time_us();
 
     flags = AE_READABLE | AE_WRITABLE;
     if (aeCreateFileEvent(loop, fd, flags, socket_connected, c) == AE_OK) {
@@ -390,7 +393,7 @@ static int response_complete(http_parser *parser) {
 
     if (c->headers.buffer) {
         *c->headers.cursor++ = '\0';
-        script_response(thread->L, status, &c->headers, &c->body);
+        script_response(thread->L, status, &c->headers, &c->body, c);
         c->state = FIELD;
     }
 
@@ -419,6 +422,7 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
 
     switch (SOCK_CONNECT(c, host)) {
         case OK:
+          c->cstats.delay_est = time_us() - c->cstats.start;	// calculate the initial connection establishment delay
         break;
 
         case ERROR:
@@ -447,6 +451,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
 
     if (c->delayed) {
         uint64_t delay = script_delay(thread->L);
+        c->cstats.delay_req = time_us();
         aeDeleteFileEvent(loop, fd, AE_WRITABLE);
         aeCreateTimeEvent(loop, delay, delay_request, c, NULL);
         return;
@@ -455,6 +460,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     if (!c->written) {
         if (cfg.dynamic) {
             script_request(thread->L, &c->request, &c->length);
+            c->cstats.reqs++;
         }
         c->start   = time_us();
         c->pending = cfg.pipeline;

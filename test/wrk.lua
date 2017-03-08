@@ -40,9 +40,6 @@ end
 function delay() -- [ms]
   local delay_rand = math.random(delay_min, delay_max)
 
---  local msg = "delay(): delay.min=%s, delay.max=%s, delay_rand=%d\n"
---  io.write(msg:format(delay_min, delay_max, delay_rand))
-
   return delay_rand
 end
 
@@ -70,13 +67,11 @@ function setup(thread)
       os.exit()
     end
 
---    local msg = "setup(): host=%s; port=%d; req_data=%d\n"
     for i, req in ipairs(requests_data) do
        -- Use the global host/port defined on the command line if not defined
        if req.host == nil then req.host = wrk.host end
        if req.port == nil then req.port = wrk.port end
 
---      io.write(msg:format(req.host, req.port, #requests_data))
        req.addr = addrs_append(req.host, req.port)
     end
   end
@@ -88,17 +83,15 @@ function setup(thread)
 
   local index
   while true do
-    index = (counter % #requests_data) + 1 		-- we can have more connections than threads
+    index = (counter % #requests_data) + 1 	-- we can have more connections than threads
     req = requests_data[index]
---    local msg = "setup(): index=%d, counter=%d, addrs_live=%d\n"
---    io.write(msg:format(index, counter, addrs_live))
     if req.addr ~= nil then break end
     counter = counter + 1			-- skip unreachable hosts
   end
   counter = counter + 1
 
   -- set per-thread userdata
-  thread:set("id", counter)
+  thread:set("thread_id", counter)
   thread:set("host", req.host)
   thread:set("port", req.port)
   thread:set("method", req.method)
@@ -114,9 +107,6 @@ function setup(thread)
   thread.scheme = req.scheme			-- addition to standard wrk
   thread.src_ip = req.host_from			-- addition to standard wrk
 
---  local msg = "setup(): wrk.scheme=%s, host=%s, port=%d, method=%s, index=%d, thread.addr=%s, thread.host=%s, thread.scheme=%s, thread.src_ip=%s, addrs_live=%d\n"
---  io.write(msg:format(wrk.scheme, req.host, req.port, req.method, index, thread.addr, thread.host, thread.scheme, thread.src_ip, addrs_live))
-
   table.insert(threads, thread)
 end
 
@@ -126,15 +116,10 @@ function wrk.init(args)
   responses = 0	-- how many responses was received within a thread
 
   if #args >= 1 then
---    local msg = "args=%d; args[0]=%s, args[1]=%s, args[2]=%s\n"
---    io.write(msg:format(#args, args[0], args[1], args[2]))
     max_requests = to_integer(args[1])
   end
 
---  local msg = "wrk.init(): thread %d, wrk.scheme=%s, wrk.host=%s, wrk.port=%s\n"
---  io.write(msg:format(id, wrk.scheme, wrk.host, wrk.port))
-
-  math.randomseed(id)				-- generate different random seed for every thread
+  math.randomseed(thread_id)			-- generate different random seed for every thread
 
   wrk.headers["Host"] = host
 
@@ -148,31 +133,13 @@ function wrk.init(args)
   end
 end
 
--- Prints Latency based on Coordinated Omission (HdrHistogram)
--- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
--- function done(summary, latency, requests)
---   for i, thread in ipairs(threads) do
---     local id        = thread:get("id")
---     local requests  = thread:get("requests")
---     local responses = thread:get("responses")
---     local msg = "# %d,%d,%d,%d,%d,%d\n"
---     io.write(msg:format(
---              id, requests, responses,
---              latency:percentile(90), latency:percentile(95), latency:percentile(99)))
---   end
--- end
-
 function request()
   requests = requests + 1
-  start_us = wrk.time_us()
-
---  local msg = "request(): method=%s, host=%s, port=%d\n"
---  io.write(msg:format(method, host, port))
 
   return wrk.format(method, path, headers, body)
 end
 
-function response(status, headers, body)
+function response(status, headers, body, stats)
   responses = responses + 1
 
   local cont_len = headers["Content-Length"]
@@ -180,11 +147,17 @@ function response(status, headers, body)
     cont_len = 0
   end
 
-  local msg = "%d,%d,%d,%d,%s %s://%s:%s%s,%d,%d\n"
-  local time_us = wrk.time_us()
-  local delay = time_us - start_us
+  local msg = "%d,%d,%d,%d,%s %s://%s:%s%s,%d,%d,%d,%d,%d,%d\n"
+  local now_us = wrk.time_us()
+  local conn_id = stats["conn_id"]			-- file descriptor of the connection for which we received this response
+  local conn_reqs = stats["conn_reqs"]			-- number of requests sent over this connection
+  local conn_start = stats["conn_start"]		-- time [us] since the Epoch we first tried to establish this connection
+  local conn_delay_est = stats["conn_delay_est"]	-- time [us] it took to establish this connection (e.g. TLS establishment); initial connection establishment delay
+  local conn_delay_req = stats["conn_delay_req"]	-- time [us] wrk was instructed to wait before sending a request at start_us
+  local start_us = stats["start"]			-- time [us] since the Epoch conn_id became writeable and we issued a new request
+  local delay = now_us - start_us			-- request latency [us] (conn_delay_est excluded)
 
-  io.write(msg:format(start_us,delay,status,cont_len,method,wrk.thread.scheme,host,port,path,id,responses))
+  io.write(msg:format(start_us,delay,status,cont_len,method,wrk.thread.scheme,host,port,path,thread_id,conn_id,conn_reqs,conn_start,conn_delay_est,conn_delay_req))
   io.flush()
 
   -- Stop after max_requests if max_requests is a positive number
