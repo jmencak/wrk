@@ -65,7 +65,7 @@ $(ODIR)/bytecode.o: src/wrk.lua
 $(ODIR)/version.o:
 	@echo 'const char *VERSION="$(VER)";' | $(CC) -xc -c -o $@ -
 
-$(ODIR)/%.o : %.c
+$(ODIR)/%.o : %.c %.h
 	@echo CC $<
 	@$(CC) $(CFLAGS) -c -o $@ $<
 

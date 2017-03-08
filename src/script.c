@@ -167,7 +167,7 @@ void script_request(lua_State *L, char **buf, size_t *len) {
     lua_pop(L, pop);
 }
 
-void script_response(lua_State *L, int status, buffer *headers, buffer *body) {
+void script_response(lua_State *L, int status, buffer *headers, buffer *body, connection *c) {
     lua_getglobal(L, "response");
     lua_pushinteger(L, status);
     lua_newtable(L);
@@ -179,7 +179,28 @@ void script_response(lua_State *L, int status, buffer *headers, buffer *body) {
     }
 
     lua_pushlstring(L, body->buffer, body->cursor - body->buffer);
-    lua_call(L, 3, 0);
+
+    lua_newtable(L);
+    lua_pushstring(L, "conn_id");
+    lua_pushinteger(L, c->fd);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "conn_reqs");
+    lua_pushinteger(L, c->cstats.reqs);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "conn_start");
+    lua_pushinteger(L, c->cstats.start);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "start");
+    lua_pushinteger(L, c->start);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "conn_delay_est");
+    lua_pushinteger(L, c->cstats.delay_est);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "conn_delay_req");
+    lua_pushinteger(L, c->start - c->cstats.delay_req);
+    lua_rawset(L, -3);
+
+    lua_call(L, 4, 0);
 
     buffer_reset(headers);
     buffer_reset(body);
