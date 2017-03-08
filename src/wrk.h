@@ -67,9 +67,15 @@ typedef struct connection {
     } state;
     int fd;
     SSL *ssl;
-    tls_session_cache * cache;
+    tls_session_cache *cache;
     bool delayed;
-    uint64_t start;
+    uint64_t start;		// time [us] since the Epoch a request was sent
+    struct {
+        uint64_t start;		// time [us] since the Epoch we first tried to establish this connection
+        uint64_t delay_est;	// time [us] it took to establish this connection (connection establishment delay)
+        uint64_t delay_req;	// time [us] since the Epoch the socket was writeable but we were instructed to delay this request
+        uint64_t reqs;		// number of requests sent over this connection
+    } cstats;
     char *request;
     size_t length;
     size_t written;
