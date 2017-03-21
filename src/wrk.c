@@ -505,8 +505,17 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
               return;
         }
 
-        if (n == 0) // EOF
+        if (n == 0) { // EOF
+            if (!http_body_is_final(&c->parser)) {
+                /* HTTP parser did not trigger response_complete() callback -- waiting for EOF in
+                   `s_body_identity_eof' state.  This happens when HTTP server does not specify 
+                   Content-Length header field in its response (e.g.: HAProxy 1.5.18 & HTTP/1.0 503).
+                   Speed things up and do not call the parser again with no data. */
+                response_complete(&c->parser);	/* will also handle reconnection */
+                return;
+            }
             goto reconnect;
+        }
 
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n)
             goto error;
